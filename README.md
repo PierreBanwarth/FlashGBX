@@ -309,7 +309,6 @@ In the GitHub [Releases](https://github.com/Lesserkuma/FlashGBX/releases) sectio
 
 ### **Linux**
 - x86-64/arm64 (.AppImage file): A portable standalone package. Just add execute permissions via `chmod +x /path/to/FlashGBX-*_Linux-*.AppImage`.
-- Installable Ubuntu package (.deb file): Installable via `dpkg -i /path/to/FlashGBX-*_Ubuntu-all.deb`.
 - Installable packages for other distributions: Available inofficially at [JJ-Fox’s repository](https://github.com/JJ-Fox/FlashGBX-Linux-builds/releases/latest).
 
 > [!NOTE]
