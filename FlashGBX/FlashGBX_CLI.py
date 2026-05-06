@@ -138,19 +138,30 @@ class FlashGBX_CLI():
 			return 0
 		
 		elif args.mode is None:
-			print("Select Cartridge Mode:\n 1) Game Boy or Game Boy Color\n 2) Game Boy Advance\n")
-			answer = input("Enter number 1-2 [2]: ").lower().strip()
-			print("")
-			if answer == "1":
-				args.mode = "dmg"
-			elif answer == "2" or answer == "":
-				args.mode = "agb"
-			else:
-				print("Canceled.")
-				self.DisconnectDevice()
-				return
-			print("")
-		
+			supported = self.DEVICE[1].GetSupprtedModes()
+			match len(supported):
+				case 0:
+					print("Hardware does not support any modes.\n")
+					self.DisconnectDevice()
+					return None
+				case 1:
+					mode = supported[0]
+					print("Using only supported cartridge mode '{:s}'\n".format(mode))
+					args.mode = mode.lower()
+				case _:
+					print("Select Cartridge Mode:\n 1) Game Boy or Game Boy Color\n 2) Game Boy Advance\n")
+					answer = input("Enter number 1-2 [2]: ").lower().strip()
+					print("")
+					if answer == "1":
+						args.mode = "dmg"
+					elif answer == "2" or answer == "":
+						args.mode = "agb"
+					else:
+						print("Canceled.")
+						self.DisconnectDevice()
+						return
+					print("")
+
 		if args.mode == "dmg":
 			print("Cartridge Mode: Game Boy or Game Boy Color")
 			self.CONN.SetMode("DMG")
