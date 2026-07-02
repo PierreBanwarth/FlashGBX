@@ -17,6 +17,9 @@ class PocketCameraWindow(QtWidgets.QDialog):
 	CUR_INDEX = 0
 	CUR_BICUBIC = False
 	CUR_FILE = ""
+	CUR_FILE_PATH = None
+	CUR_FULL_FILE = None
+	CUR_PHOTO_CUSTOM_ROLL = None
 	CUR_EXPORT_PATH = "."
 	CUR_PC = None
 	CUR_PALETTE = 3
@@ -236,6 +239,9 @@ class PocketCameraWindow(QtWidgets.QDialog):
 
 	def OpenFile(self, file):
 		if isinstance(file, bytearray) and len(file) == 0x100000 or isinstance(file, str) and os.path.getsize(file) == 0x100000:
+			self.CUR_FILE_PATH = file if isinstance(file, str) else None
+			self.CUR_FULL_FILE = file if isinstance(file, bytearray) else None
+			self.CUR_PHOTO_CUSTOM_ROLL = None
 			dlg_args = {
 				"title":"Photo!",
 				"intro":__("A “Photo!” save file was detected. Please select the roll of pictures that you would like to load."),
@@ -249,12 +255,20 @@ class PocketCameraWindow(QtWidgets.QDialog):
 				index = result["index"].currentIndex()
 				if isinstance(file, str):
 					with open(file, "rb") as f:
-						file = bytearray(f.read())
-				file = file[0x20000 * index:][:0x20000]
+						full_file = bytearray(f.read())
+				else:
+					full_file = file
+				self.CUR_FULL_FILE = full_file
+				self.CUR_PHOTO_CUSTOM_ROLL = index
+				file = full_file[0x20000 * index:][:0x20000]
 			else:
 				self.CUR_PC = None
 				return False
 
+		self.CUR_FILE_PATH = file if isinstance(file, str) else self.CUR_FILE_PATH
+		if not isinstance(file, str):
+			self.CUR_FILE_PATH = self.CUR_FILE_PATH
+		self.CUR_PC = None
 		try:
 			self.CUR_PC = PocketCamera()
 			if self.CUR_PC.LoadFile(file) == False:
@@ -298,24 +312,105 @@ class PocketCameraWindow(QtWidgets.QDialog):
 		self.UpdateViewer(31)
 		self.CUR_INDEX = 31
 
+	def _IsPhotoCustomRom(self):
+		if self.CUR_FULL_FILE is not None and len(self.CUR_FULL_FILE) == 0x100000:
+			return True
+		if self.CUR_FILE_PATH is not None and os.path.isfile(self.CUR_FILE_PATH) and os.path.getsize(self.CUR_FILE_PATH) == 0x100000:
+			return True
+		return False
+
+	def _GetExportPrefix(self, path, digits=2):
+		prefix = os.path.splitext(path)[0]
+		dirname = os.path.dirname(prefix)
+		basename = os.path.basename(prefix)
+		if len(basename) > digits and basename[-digits:].isdigit():
+			basename = basename[:-digits]
+		return os.path.join(dirname, basename)
+
+	def _GetNextExportIndex(self, directory, prefix, ext, digits=2):
+		prefix_base = os.path.basename(prefix)
+		existing_index = -1
+		try:
+			for fn in os.listdir(directory):
+				if not fn.lower().endswith(ext.lower()):
+					continue
+				name = fn[:-len(ext)]
+				if not name.startswith(prefix_base):
+					continue
+				suffix = name[len(prefix_base):]
+				if len(suffix) != digits or not suffix.isdigit():
+					continue
+				idx = int(suffix)
+				if idx > existing_index:
+					existing_index = idx
+			return existing_index + 1
+		except OSError:
+			return 0
+
+	def _GetPhotoRomSource(self):
+		if self.CUR_FULL_FILE is not None and len(self.CUR_FULL_FILE) == 0x100000:
+			return self.CUR_FULL_FILE
+		if self.CUR_FILE_PATH is not None and os.path.isfile(self.CUR_FILE_PATH) and os.path.getsize(self.CUR_FILE_PATH) == 0x100000:
+			try:
+				with open(self.CUR_FILE_PATH, "rb") as f:
+					return bytearray(f.read())
+			except OSError:
+				return None
+		return None
+
+	def _ExportPicture(self, cam, index, path):
+		frame = False
+		if self.chkFrame.isChecked():
+			frame = True
+			own_frame = self.CONFIG_PATH + os.sep + "pc_frame.png"
+			if not os.path.exists(own_frame):
+				shutil.copy(self.APP_PATH + os.sep + os.path.join("res", "pc_frame.png"), own_frame)
+			with open(own_frame, "rb") as f:
+				frame = f.read()
+		if index == 31:
+			frame = False
+		cam.ExportPicture(index=index, path=path, scale=self.spnZoom.value(), frame=frame)
+
+	def _ExportAllPhotoRomRolls(self):
+		full_file = self._GetPhotoRomSource()
+		if full_file is None:
+			QtWidgets.QMessageBox.critical(self, AppInfo.NAME, __("Unable to retrieve the full Photo ROM source file."), QtWidgets.QMessageBox.Ok)
+			return
+		for roll in range(1, 9):
+			roll_data = full_file[0x20000 * (roll - 1):0x20000 * roll]
+			pc = PocketCamera()
+			if pc.LoadFile(roll_data) == False:
+				continue
+			prefix = os.path.join(self.CUR_EXPORT_PATH, "IMG_P{:d}".format(roll))
+			ext = ".png"
+			start = self._GetNextExportIndex(self.CUR_EXPORT_PATH, prefix, ext)
+			for i in range(0, 32):
+				file = prefix + "{:02d}".format(start + i) + ext
+				self._ExportPicture(pc, i, file)
+		QtWidgets.QMessageBox.information(self, AppInfo.NAME, __("The pictures were extracted."), QtWidgets.QMessageBox.Ok)
+
 	def btnSaveAll_Clicked(self, event):
 		if self.CUR_PC is None: return
+		if self._IsPhotoCustomRom():
+			directory = QtWidgets.QFileDialog.getExistingDirectory(self, __("Export all pictures"), self.CUR_EXPORT_PATH)
+			if directory == "":
+				return
+			self.CUR_EXPORT_PATH = directory
+			self._ExportAllPhotoRomRolls()
+			return
+
 		path = self.CUR_EXPORT_PATH + os.sep + "IMG_PC.png"
 		path = QtWidgets.QFileDialog.getSaveFileName(self, __("Export all pictures"), path, __("PNG files") + " (*.png);;" + __("BMP files") + " (*.bmp);;" + __("GIF files") + " (*.gif);;" + __("JPEG files") + " (*.jpg);;" + __("All files") + " (*.*)")[0]
 		if path == "": return
 		self.CUR_EXPORT_PATH = os.path.dirname(path)
+		prefix = self._GetExportPrefix(path)
+		ext = os.path.splitext(path)[1]
+		start = self._GetNextExportIndex(self.CUR_EXPORT_PATH, prefix, ext)
+		if start < 1:
+			start = 1
 
 		for i in range(0, 32):
-			file = os.path.splitext(path)[0] + "{:02d}".format(i) + os.path.splitext(path)[1]
-			if os.path.exists(file):
-				answer = QtWidgets.QMessageBox.warning(self, AppInfo.NAME, __("There are already pictures that use the same file names. If you continue, these files will be overwritten."), QtWidgets.QMessageBox.Ok | QtWidgets.QMessageBox.Cancel)
-				if answer == QtWidgets.QMessageBox.Ok:
-					break
-				elif answer == QtWidgets.QMessageBox.Cancel:
-					return
-
-		for i in range(0, 32):
-			file = os.path.splitext(path)[0] + "{:02d}".format(i+1) + os.path.splitext(path)[1]
+			file = prefix + "{:02d}".format(start + i) + ext
 			self.SavePicture(i, path=file)
 
 	def btnSavePhoto_Clicked(self, event):
@@ -377,18 +472,7 @@ class PocketCameraWindow(QtWidgets.QDialog):
 			if path != "": self.CUR_EXPORT_PATH = os.path.dirname(path)
 		if path == "": return
 
-		cam = self.CUR_PC
-
-		frame = False
-		if self.chkFrame.isChecked():
-			frame = True
-			own_frame = self.CONFIG_PATH + os.sep + "pc_frame.png"
-			if not os.path.exists(own_frame):
-				shutil.copy(self.APP_PATH + os.sep + os.path.join("res", "pc_frame.png"), own_frame)
-			with open(own_frame, "rb") as f: frame = f.read()
-
-		if index == 31: frame = False # last seen image
-		cam.ExportPicture(index=index, path=path, scale=self.spnZoom.value(), frame=frame)
+		self._ExportPicture(self.CUR_PC, index, path)
 
 	def dragEnterEvent(self, e):
 		if self._dragEventHover(e):

@@ -14,6 +14,8 @@ for Windows, Linux, macOS (→ [Download](#downloads))
 - Many reproduction cartridges and flash cartridges can be auto-detected
 - A flash chip query (including Common Flash Interface information) can be performed for flash cartridges
 - Decode and extract Game Boy Camera photos from save data
+- Extract all Game Boy Camera photos from a single custom Photo ROM save file in one pass
+- Automatically increment exported file suffixes when prior pictures already exist to avoid overwriting
 - Generate ROM dump reports for game preservation purposes
 - Supported interface languages: English, German
 
