@@ -92,6 +92,16 @@ class PocketCameraWindow(QtWidgets.QDialog):
 		self.rowOptions1.addWidget(self.chkFrame)
 
 		grpOptionsLayout.addLayout(self.rowOptions1)
+		# Export prefix option (default filled from settings later)
+		self.rowOptions2 = QtWidgets.QHBoxLayout()
+		self.rowOptions2.setSpacing(6)
+		self.lblExportPrefix = QtWidgets.QLabel(__("Export Filename Prefix:"))
+		self.txtExportPrefix = QtWidgets.QLineEdit()
+		self.txtExportPrefix.setMaximumWidth(160)
+		self.rowOptions2.addWidget(self.lblExportPrefix)
+		self.rowOptions2.addWidget(self.txtExportPrefix)
+		self.rowOptions2.addStretch(1)
+		grpOptionsLayout.addLayout(self.rowOptions2)
 		self.grpOptions.setLayout(grpOptionsLayout)
 
 		self.layout_options1.addWidget(self.grpOptions)
@@ -118,6 +128,10 @@ class PocketCameraWindow(QtWidgets.QDialog):
 		self.lblPhotoViewer.setStyleSheet("border-top: 1px solid #adadad; border-left: 1px solid #adadad; border-bottom: 1px solid #ffffff; border-right: 1px solid #ffffff;")
 		self.lblPhotoViewer.mousePressEvent = self.lblPhotoViewer_Clicked
 		self.grpPhotoViewLayout.addWidget(self.lblPhotoViewer)
+		self.lblPhotoInfo = QtWidgets.QLabel("")
+		self.lblPhotoInfo.setWordWrap(True)
+		self.lblPhotoInfo.setStyleSheet("color: #606060; font-size: 11px;")
+		self.grpPhotoViewLayout.addWidget(self.lblPhotoInfo)
 
 		# Actions below Viewer
 		rowActionsGeneral2 = QtWidgets.QHBoxLayout()
@@ -125,9 +139,10 @@ class PocketCameraWindow(QtWidgets.QDialog):
 		self.btnSavePhoto.setStyleSheet("padding: 5px 10px;")
 		self.btnSavePhoto.clicked.connect(self.btnSavePhoto_Clicked)
 		rowActionsGeneral2.addWidget(self.btnSavePhoto)
-		self.btnSaveAll = QtWidgets.QPushButton(c__("Button (& = Keyboard Shortcut)", "Save &All Pictures"))
+		self.btnSaveAll = QtWidgets.QPushButton(c__("Button (& = Keyboard Shortcut)", "Save / Extract &All Pictures"))
 		self.btnSaveAll.setStyleSheet("padding: 5px 10px;")
 		self.btnSaveAll.clicked.connect(self.btnSaveAll_Clicked)
+		self.btnSaveAll.setToolTip(__("Save the current slot or, for a full 1 MiB Photo ROM, extract all rolls into one folder."))
 		rowActionsGeneral2.addWidget(self.btnSaveAll)
 		self.grpPhotoViewLayout.addLayout(rowActionsGeneral2)
 
@@ -138,6 +153,7 @@ class PocketCameraWindow(QtWidgets.QDialog):
 		self.grpPhotoThumbsLayout = QtWidgets.QVBoxLayout()
 		self.grpPhotoThumbsLayout.setSpacing(2)
 		self.grpPhotoThumbsLayout.setContentsMargins(-1, 3, -1, -1)
+		# Static 30 thumbnails (kept for single-roll mode)
 		self.lblPhoto = []
 		rowsPhotos = []
 		for row in range(0, 5):
@@ -153,6 +169,16 @@ class PocketCameraWindow(QtWidgets.QDialog):
 				self.lblPhoto[len(self.lblPhoto)-1].setStyleSheet("border-top: 1px solid #adadad; border-left: 1px solid #adadad; border-bottom: 1px solid #fefefe; border-right: 1px solid #fefefe;")
 				rowsPhotos[row].addWidget(self.lblPhoto[len(self.lblPhoto)-1])
 			self.grpPhotoThumbsLayout.addLayout(rowsPhotos[row])
+
+		# Scrollable area for multi-roll (240) thumbnails
+		self.scrollThumbs = QtWidgets.QScrollArea()
+		self.scrollThumbs.setWidgetResizable(True)
+		self.scrollThumbsInner = QtWidgets.QWidget()
+		self.scrollThumbsLayout = QtWidgets.QGridLayout(self.scrollThumbsInner)
+		self.scrollThumbsLayout.setSpacing(2)
+		self.scrollThumbsInner.setLayout(self.scrollThumbsLayout)
+		self.scrollThumbs.setWidget(self.scrollThumbsInner)
+		self.scrollThumbs.hide()
 
 		rowActionsGeneral3 = QtWidgets.QHBoxLayout()
 		self.btnShowGameFace = QtWidgets.QPushButton(c__("Button (& = Keyboard Shortcut)", "&Game Face"))
@@ -170,12 +196,12 @@ class PocketCameraWindow(QtWidgets.QDialog):
 		self.grpPhotoThumbs.setLayout(self.grpPhotoThumbsLayout)
 
 		self.layout_photos.addWidget(self.grpPhotoThumbs)
+		self.layout_photos.addWidget(self.scrollThumbs)
 		self.layout_photos.addWidget(self.grpPhotoView)
 
 		self.layout.addLayout(self.layout_options1, 0, 0)
-		self.layout.addLayout(self.layout_options2, 1, 0)
-		self.layout.addLayout(self.layout_photos, 2, 0)
-		self.layout.addLayout(self.layout_options3, 3, 0)
+		self.layout.addLayout(self.layout_photos, 1, 0)
+		self.layout.addLayout(self.layout_options3, 2, 0)
 		self.setLayout(self.layout)
 
 		self.APP = app
@@ -202,6 +228,9 @@ class PocketCameraWindow(QtWidgets.QDialog):
 		if not palette_found:
 			self.PALETTES.append(palette)
 			self.CUR_PALETTE = len(self.PALETTES) - 1
+
+		# Always default the export prefix to IMG_PC on startup
+		self.txtExportPrefix.setText("IMG_PC")
 
 		if self.CUR_FILE is not None:
 			if self.OpenFile(self.CUR_FILE) is False:
@@ -238,15 +267,16 @@ class PocketCameraWindow(QtWidgets.QDialog):
 		self.UpdateViewer(self.CUR_INDEX)
 
 	def OpenFile(self, file):
+		original_file_path = file if isinstance(file, str) else self.CUR_FILE_PATH
 		if isinstance(file, bytearray) and len(file) == 0x100000 or isinstance(file, str) and os.path.getsize(file) == 0x100000:
-			self.CUR_FILE_PATH = file if isinstance(file, str) else None
+			self.CUR_FILE_PATH = file if isinstance(file, str) else self.CUR_FILE_PATH
 			self.CUR_FULL_FILE = file if isinstance(file, bytearray) else None
 			self.CUR_PHOTO_CUSTOM_ROLL = None
 			dlg_args = {
 				"title":"Photo!",
 				"intro":__("A “Photo!” save file was detected. Please select the roll of pictures that you would like to load."),
 				"params": [
-					[ "index", "cmb", __("Film roll:"), [ __("Current Save Data") ] + [ __("“{flash_directory}” Slot {number}", flash_directory="Flash Directory", number="{:d}".format(l)) for l in range(1, 8) ], 0 ],
+					[ "index", "cmb", __("Film roll:"), [ __("Current Save Data") , __("Current Save Data and All Slots") ] + [ __("“{flash_directory}” Slot {number}", flash_directory="Flash Directory", number="{:d}".format(l)) for l in range(1, 8) ], 1 ],
 				]
 			}
 			dlg = UserInputDialog(self, icon=self.windowIcon(), args=dlg_args)
@@ -259,15 +289,17 @@ class PocketCameraWindow(QtWidgets.QDialog):
 				else:
 					full_file = file
 				self.CUR_FULL_FILE = full_file
-				self.CUR_PHOTO_CUSTOM_ROLL = index
-				file = full_file[0x20000 * index:][:0x20000]
+				if index == 1:
+					self.CUR_PHOTO_CUSTOM_ROLL = -1
+					file = full_file[0x20000 * 0:0x20000 * 1]
+				else:
+					self.CUR_PHOTO_CUSTOM_ROLL = index - 1 if index > 1 else index
+					file = full_file[0x20000 * self.CUR_PHOTO_CUSTOM_ROLL:0x20000 * (self.CUR_PHOTO_CUSTOM_ROLL + 1)]
 			else:
 				self.CUR_PC = None
 				return False
 
-		self.CUR_FILE_PATH = file if isinstance(file, str) else self.CUR_FILE_PATH
-		if not isinstance(file, str):
-			self.CUR_FILE_PATH = self.CUR_FILE_PATH
+		self.CUR_FILE_PATH = original_file_path if isinstance(original_file_path, str) else self.CUR_FILE_PATH
 		self.CUR_PC = None
 		try:
 			self.CUR_PC = PocketCamera()
@@ -275,11 +307,18 @@ class PocketCameraWindow(QtWidgets.QDialog):
 				self.CUR_PC = None
 				QtWidgets.QMessageBox.critical(self, AppInfo.NAME, __("The save data file couldn’t be loaded."), QtWidgets.QMessageBox.Ok)
 				return False
-			self.CUR_FILE = file
-			if self.CUR_EXPORT_PATH == "":
+			self.CUR_FILE = original_file_path if isinstance(original_file_path, str) else ""
+			if self.CUR_EXPORT_PATH == "" and self.CUR_FILE != "":
 				self.CUR_EXPORT_PATH = os.path.dirname(self.CUR_FILE)
 			self.UpdateViewer(0)
 			self.SetColors()
+			if self._IsPhotoCustomRom():
+				if self.CUR_PHOTO_CUSTOM_ROLL == -1:
+					self.lblPhotoInfo.setText(__("1 MiB Photo save file detected. The current roll is shown while all slots are available for export."))
+				else:
+					self.lblPhotoInfo.setText(__("1 MiB Photo save file detected. Use Save / Extract All Pictures to export all rolls."))
+			else:
+				self.lblPhotoInfo.setText("")
 			return True
 		except:
 			self.CUR_PC = None
@@ -358,6 +397,22 @@ class PocketCameraWindow(QtWidgets.QDialog):
 				return None
 		return None
 
+	def _BuildAllRollImages(self):
+		# Build a flat list of (PIL Image RGBA, deleted_flag) for all 8 rolls (240 images)
+		full = self._GetPhotoRomSource()
+		if full is None: return None
+		all_images = []
+		for roll in range(0, 8):
+			roll_data = full[0x20000 * roll:0x20000 * (roll + 1)]
+			pc = PocketCamera()
+			if pc.LoadFile(roll_data) == False:
+				continue
+			for i in range(0, 30):
+				img = pc.GetPicture(i).convert("RGBA")
+				is_deleted = pc.IsDeleted(i)
+				all_images.append((img, is_deleted))
+		return all_images
+
 	def _ExportPicture(self, cam, index, path):
 		frame = False
 		if self.chkFrame.isChecked():
@@ -381,7 +436,16 @@ class PocketCameraWindow(QtWidgets.QDialog):
 			pc = PocketCamera()
 			if pc.LoadFile(roll_data) == False:
 				continue
-			prefix = os.path.join(self.CUR_EXPORT_PATH, "IMG_P{:d}".format(roll))
+			# Use user-defined export prefix if available
+			base_prefix = "IMG_PC"
+			try:
+				if hasattr(self, 'txtExportPrefix'):
+					val = str(self.txtExportPrefix.text()).strip()
+					if val != "":
+						base_prefix = val
+			except:
+				base_prefix = "IMG_PC"
+			prefix = os.path.join(self.CUR_EXPORT_PATH, "{}_{:d}".format(base_prefix, roll))
 			ext = ".png"
 			start = self._GetNextExportIndex(self.CUR_EXPORT_PATH, prefix, ext)
 			for i in range(0, 32):
@@ -399,7 +463,13 @@ class PocketCameraWindow(QtWidgets.QDialog):
 			self._ExportAllPhotoRomRolls()
 			return
 
-		path = self.CUR_EXPORT_PATH + os.sep + "IMG_PC.png"
+		# default filename uses export prefix field when present
+		default_name = "IMG_PC"
+		if hasattr(self, 'txtExportPrefix'):
+			val = str(self.txtExportPrefix.text()).strip()
+			if val != "":
+				default_name = val
+		path = self.CUR_EXPORT_PATH + os.sep + default_name + ".png"
 		path = QtWidgets.QFileDialog.getSaveFileName(self, __("Export all pictures"), path, __("PNG files") + " (*.png);;" + __("BMP files") + " (*.bmp);;" + __("GIF files") + " (*.gif);;" + __("JPEG files") + " (*.jpg);;" + __("All files") + " (*.*)")[0]
 		if path == "": return
 		self.CUR_EXPORT_PATH = os.path.dirname(path)
@@ -429,31 +499,83 @@ class PocketCameraWindow(QtWidgets.QDialog):
 		self.APP.activateWindow()
 
 	def BuildPhotoList(self):
-		cam = self.CUR_PC
-		self.CUR_THUMBS = [None] * 30
-		for i in range(0, 30):
-			pic = cam.GetPicture(i).convert("RGBA")
-			self.lblPhoto[i].setToolTip("")
-			if cam.IsEmpty(i):
-				pass
-			elif cam.IsDeleted(i):
-				draw_bg = Image.new("RGBA", pic.size)
-				draw = ImageDraw.Draw(draw_bg)
-				draw.line([0, 0, 128, 112], fill=(255, 0, 0, 192), width=8)
-				draw.line([0, 112, 128, 0], fill=(255, 0, 0, 192), width=8)
-				pic.paste(draw_bg, mask=draw_bg)
-				self.lblPhoto[i].setToolTip(__("This picture was marked as “deleted” and may be overwritten when you take new pictures."))
-			self.CUR_THUMBS[i] = ImageQt(pic.resize((47, 41), Image.Resampling.HAMMING))
-			qpixmap = QtGui.QPixmap.fromImage(self.CUR_THUMBS[i])
-			self.lblPhoto[i].setPixmap(qpixmap)
+		# Single-roll mode
+		if not (self.CUR_PHOTO_CUSTOM_ROLL == -1):
+			cam = self.CUR_PC
+			self.CUR_THUMBS = [None] * 30
+			for i in range(0, 30):
+				pic = cam.GetPicture(i).convert("RGBA")
+				self.lblPhoto[i].setToolTip("")
+				if cam.IsEmpty(i):
+					pass
+				elif cam.IsDeleted(i):
+					draw_bg = Image.new("RGBA", pic.size)
+					draw = ImageDraw.Draw(draw_bg)
+					draw.line([0, 0, 128, 112], fill=(255, 0, 0, 192), width=8)
+					draw.line([0, 112, 128, 0], fill=(255, 0, 0, 192), width=8)
+					pic.paste(draw_bg, mask=draw_bg)
+					self.lblPhoto[i].setToolTip(__("This picture was marked as “deleted” and may be overwritten when you take new pictures."))
+				self.CUR_THUMBS[i] = ImageQt(pic.resize((47, 41), Image.Resampling.HAMMING))
+				qpixmap = QtGui.QPixmap.fromImage(self.CUR_THUMBS[i])
+				self.lblPhoto[i].setPixmap(qpixmap)
+			# ensure static thumbs visible, hide scroll area
+			self.grpPhotoThumbs.show()
+			self.scrollThumbs.hide()
+			return
+
+		# Multi-roll mode: build and show 240 thumbnails in scroll area
+		all_images = self._BuildAllRollImages()
+		if all_images is None:
+			self.grpPhotoThumbs.show()
+			self.scrollThumbs.hide()
+			return
+		self.CUR_ALL_IMAGES = all_images
+		# clear existing widgets in scrollThumbsLayout
+		for i in reversed(range(self.scrollThumbsLayout.count())):
+			w = self.scrollThumbsLayout.itemAt(i).widget()
+			if w is not None:
+				w.setParent(None)
+
+		cols = 10
+		for idx, (img, deleted) in enumerate(self.CUR_ALL_IMAGES):
+			thumb = img.resize((47, 41), Image.Resampling.HAMMING)
+			qthumb = QtGui.QPixmap.fromImage(ImageQt(thumb))
+			lbl = QtWidgets.QLabel(self.scrollThumbsInner)
+			lbl.setPixmap(qthumb)
+			lbl.setMinimumSize(49, 43)
+			lbl.setMaximumSize(49, 43)
+			lbl.setAlignment(QtCore.Qt.AlignCenter)
+			lbl.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
+			lbl.mousePressEvent = functools.partial(self.lblPhoto_Clicked, index=idx)
+			if deleted:
+				lbl.setToolTip(__("This picture was marked as “deleted” and may be overwritten when you take new pictures."))
+			self.scrollThumbsLayout.addWidget(lbl, idx // cols, idx % cols)
+
+		self.grpPhotoThumbs.hide()
+		self.scrollThumbs.show()
 
 	def UpdateViewer(self, index, scale_factor=4):
 		resampler = Image.Resampling.NEAREST
 		if self.CUR_BICUBIC or index == 31: resampler = Image.Resampling.BICUBIC
 		if resampler == Image.Resampling.BICUBIC: scale_factor = 0.5
+		# If multi-roll mode, use prebuilt images
+		if self.CUR_PHOTO_CUSTOM_ROLL == -1 and hasattr(self, 'CUR_ALL_IMAGES'):
+			if index < 0 or index >= len(self.CUR_ALL_IMAGES):
+				return
+			img = self.CUR_ALL_IMAGES[index][0]
+			resized = img.resize((int(256 * scale_factor), int(224 * scale_factor)), resampler)
+			self.CUR_PIC = ImageQt(resized)
+			qpixmap = QtGui.QPixmap.fromImage(self.CUR_PIC)
+			qpixmap.setDevicePixelRatio(scale_factor)
+			self.lblPhotoViewer.setPixmap(qpixmap)
+			# update selection highlight for static thumbs if visible
+			for i in range(0, len(self.lblPhoto)):
+				self.lblPhoto[i].setStyleSheet("border-top: 1px solid #adadad; border-left: 1px solid #adadad; border-bottom: 1px solid #ffffff; border-right: 1px solid #ffffff;")
+			return
+
+		# single-roll mode
 		cam = self.CUR_PC
 		if cam is None: return
-
 		for i in range(0, 30):
 			self.lblPhoto[i].setStyleSheet("border-top: 1px solid #adadad; border-left: 1px solid #adadad; border-bottom: 1px solid #ffffff; border-right: 1px solid #ffffff;")
 
@@ -467,7 +589,13 @@ class PocketCameraWindow(QtWidgets.QDialog):
 
 	def SavePicture(self, index, path=""):
 		if path == "":
-			path = self.CUR_EXPORT_PATH + os.sep + "IMG_PC{:02d}.png".format(index+1)
+			# Use export prefix from UI when present
+			default_name = "IMG_PC"
+			if hasattr(self, 'txtExportPrefix'):
+				val = str(self.txtExportPrefix.text()).strip()
+				if val != "":
+					default_name = val
+			path = self.CUR_EXPORT_PATH + os.sep + default_name + "{:02d}.png".format(index+1)
 			path = QtWidgets.QFileDialog.getSaveFileName(self, __("Save Photo"), path, __("PNG files") + " (*.png);;" + __("BMP files") + " (*.bmp);;" + __("GIF files") + " (*.gif);;" + __("JPEG files") + " (*.jpg);;" + __("All files") + " (*.*)")[0]
 			if path != "": self.CUR_EXPORT_PATH = os.path.dirname(path)
 		if path == "": return
